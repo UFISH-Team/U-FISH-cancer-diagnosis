@@ -1,0 +1,7 @@
+ufish
+Pillow
+matplotlib
+cellpose
+scikit-image
+scikit-learn
+napari[all]
