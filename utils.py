@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import cv2
-import numpy as np
 
 
 def segment_cells(
@@ -76,11 +75,11 @@ def extract_cell_rois(image, masks, min_area):
                 padded_mask[start_y:start_y+h, start_x:start_x+w] = cell_mask
 
                 channel_cell_rois.append(padded_roi)
-                if ch == image.shape[2] - 1: 
+                if ch == image.shape[2] - 1:
                     channel_cell_masks.append(padded_mask)
 
         cell_rois.append(channel_cell_rois)
-        if ch == image.shape[2] - 1: 
+        if ch == image.shape[2] - 1:
             cell_masks = channel_cell_masks
 
     return np.array(cell_rois), np.array(cell_masks)
@@ -129,7 +128,7 @@ def coordinates_to_mask(
 
 def cc_centroids(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     if mask.dtype == bool:
-        mask = label(mask.astype(int)) 
+        mask = label(mask.astype(int))
     ccs = regionprops(mask)
     centroids, labels = [], []
     for cc in ccs:
@@ -199,7 +198,7 @@ def assign_spots(
         mask_val = mask[clost[:, 0], clost[:, 1], clost[:, 2]]
     res = mask_val
     res[dist > dist_th] = 0
-    return res    
+    return res
 
 
 def change_ch(img):
@@ -244,7 +243,7 @@ def plot_cell_and_spots(img, mask, signals, colors, number):
         0.03, 0.97, str(number), color='white', fontsize=30,
         alpha=1, transform=ax[0].transAxes, ha='left', va='top')
 
-    fig.tight_layout(pad=0) 
+    fig.tight_layout(pad=0)
     return fig
 
 
@@ -322,7 +321,7 @@ def get_merge_and_split_masks(ufish_instance, cell_im, channels, quantile=25, sq
     merge_mask = reduce(lambda x, y: x & y, signal_masks.values())
     signal_masks_sub = {}  # signal masks for each channel after subtracting merged mask
 
-    # remove connected components which with overlap with the merged 
+    # remove connected components which with overlap with the merged
     for ch in channels:
         ch_sig_mask = signal_masks[ch]
         signal_masks_sub[ch] = mask_sub(ch_sig_mask, [merge_mask])
@@ -391,7 +390,10 @@ def pipeline(
             except Exception:
                 assigns[name] = []
 
-        df = {key: sum(value) for key, value in assigns.items() if isinstance(value, np.ndarray)} 
+        df = {
+            key: sum(value) for key, value in assigns.items()
+            if isinstance(value, np.ndarray)
+        }
         df["cell_id"] = f'{w+1}'
         last_key = list(df.keys())[-1]
         last_value = df.pop(last_key)
