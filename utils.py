@@ -306,26 +306,25 @@ def extract_signal_mask(cell_im_ch, cell_spots, quantile=25, square_size=3):
     return signal_mask
 
 
-def get_merge_and_split_masks(ufish_instance, cell_im, channels, quantile=25, square_size=3):
-    signal_masks = {}  # signal masks for each channel
+def get_signal_masks(ufish_instance, image, channels, quantile=25, square_size=3):
+    signal_masks = []  # signal masks for each channel
 
     for ch in channels:
-        cell_spots = call_spots(ufish_instance, cell_im, ch=[ch], intensity_threshold=0.3)[0]
-        cell_im_ch =  cell_im[:, :, ch]
+        cell_spots = call_spots(ufish_instance, image, ch=[ch], intensity_threshold=0.3)[0]
+        cell_im_ch = image[:, :, ch]
         if len(cell_spots) == 0:
             return None, None, None
         signal_mask = extract_signal_mask(cell_im_ch, cell_spots, quantile=quantile, square_size=square_size)
-        signal_masks[ch] = signal_mask
+        signal_masks.append(signal_mask)
 
-    #merge_mask = signal_masks[0] & signal_masks[1] # merge mask
-    merge_mask = reduce(lambda x, y: x & y, signal_masks.values())
-    signal_masks_sub = {}  # signal masks for each channel after subtracting merged mask
+    merge_mask = reduce(lambda x, y: x & y, signal_masks)
+    signal_masks_sub = []  # signal masks for each channel after subtracting merged mask
 
     # remove connected components which with overlap with the merged
-    for ch in channels:
-        ch_sig_mask = signal_masks[ch]
-        signal_masks_sub[ch] = mask_sub(ch_sig_mask, [merge_mask])
-    return merge_mask, signal_masks, signal_masks_sub
+    for ch_sig_mask in signal_masks:
+        signal_masks_sub.append(mask_sub(ch_sig_mask, [merge_mask]))
+    signal_masks_sub = np.array(signal_masks_sub)
+    return merge_mask, signal_masks_sub
 
 
 def keep_largest_area_label(mask):
