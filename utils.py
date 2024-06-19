@@ -8,81 +8,51 @@ from skimage.morphology import diamond, ball, dilation, square
 from functools import reduce
 from skimage.segmentation import watershed
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-import cv2
 
 
 def segment_cells(
-        cellpose_instance, img, ch=-1, area_threshold=1000,
-        centroid_distance_threshold=95,
-        axis_ratio_threshold=0.9):
+        cellpose_instance, img, ch=-1):
     """Segment cells using cellpose model and remove masks based on centroid distance and axis ratio."""
     cp = cellpose_instance
     img = img[:, :, ch]
     masks, _, _, _ = cp.eval(
         img, diameter=50, flow_threshold=1.2, cellprob_threshold=1)
-    masks = remove_small_objects(masks, min_size=1000)
-    labeled_masks = label(masks)
-    props = regionprops(labeled_masks)
-    centroids = np.array([prop.centroid for prop in props])
-    distances = cdist(centroids, centroids)
-    for i in range(len(props)):
-        if props[i].area > area_threshold:
-            axis_ratio = props[i].minor_axis_length / props[i].major_axis_length
-            distances_to_other_centroids = distances[i, :]
-            distances_to_other_centroids[i] = np.inf
-            if np.min(distances_to_other_centroids) < centroid_distance_threshold or axis_ratio < axis_ratio_threshold:
-                masks[labeled_masks == props[i].label] = 0
     return masks
 
 
-def extract_cell_rois(image, masks, min_area):
+def extract_cells(
+        image: np.ndarray, mask: np.ndarray,
+        target_size=128,
+        ):
     cell_rois = []
+    cell_props = []
     cell_masks = []
 
-    for ch in range(image.shape[2]):
-        ch_image = image[:, :, ch]
-        binary_mask = (masks > 0).astype(np.uint8)
-        contours, _ = cv2.findContours(
-            binary_mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    props = regionprops(mask)
 
-        channel_cell_rois = []
-        channel_cell_masks = []
-
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            cell_roi = ch_image[y:y+h, x:x+w]
-            cell_mask = binary_mask[y:y+h, x:x+w]
-
-            mask_area = np.sum(cell_mask)
-
-            if mask_area > min_area:
-                scale_factor = min(128 / h, 128 / w)
-                if scale_factor < 1:
-                    new_w, new_h = int(w * scale_factor), int(h * scale_factor)
-                    cell_roi = cv2.resize(cell_roi, (new_w, new_h))
-                    cell_mask = cv2.resize(cell_mask, (new_w, new_h))
-                    w, h = new_w, new_h
-
-                padded_roi = np.zeros((128, 128), dtype=ch_image.dtype)
-                padded_mask = np.zeros((128, 128), dtype=binary_mask.dtype)
-
-                start_y = (128 - h) // 2
-                start_x = (128 - w) // 2
-
-                padded_roi[start_y:start_y+h, start_x:start_x+w] = cell_roi
-                padded_mask[start_y:start_y+h, start_x:start_x+w] = cell_mask
-
-                channel_cell_rois.append(padded_roi)
-                if ch == image.shape[2] - 1:
-                    channel_cell_masks.append(padded_mask)
-
-        cell_rois.append(channel_cell_rois)
-        if ch == image.shape[2] - 1:
-            cell_masks = channel_cell_masks
-
-    return np.array(cell_rois), np.array(cell_masks)
+    for prop in props:
+        y0, x0, y1, x1 = prop.bbox
+        w, h = x1 - x0, y1 - y0
+        long_side = max(w, h)
+        if long_side > target_size:
+            continue
+        roi = np.zeros(
+            (target_size, target_size, image.shape[2]),
+            dtype=image.dtype
+        )
+        start_y = (target_size - h) // 2
+        start_x = (target_size - w) // 2
+        coords = prop.coords
+        roi_y = coords[:, 0] - y0 + start_y
+        roi_x = coords[:, 1] - x0 + start_x
+        roi[roi_y, roi_x, :] = image[coords[:, 0], coords[:, 1], :]
+        cell_rois.append(roi)
+        cell_props.append(prop)
+        cell_mask = np.zeros((target_size, target_size), dtype=np.uint8)
+        cell_mask[roi_y, roi_x] = 1
+        cell_masks.append(cell_mask)
+    return cell_rois, cell_masks, cell_props
 
 
 def cc_sub(im: np.ndarray, seed: np.ndarray, connectivity=2) -> np.ndarray:
@@ -151,14 +121,14 @@ def spots_sub(spots_a: np.ndarray, spots_b: np.ndarray, radius: int):
     return cc_centroids(res_mask)[0]
 
 
-def call_spots(ufish_instance, img, ch=[0, 1], intensity_threshold=0.5):
+def call_spots(ufish_instance, img, ch=[0, 1], p_threshold=0.5):
     """Call spots using ufish model."""
     uf = ufish_instance
     spots_list = []
     for c in ch:
         spots, _ = uf.predict(img[:, :, c])
         spots = spots.values
-        spots = spots[img[spots[:, 0], spots[:, 1], c] > intensity_threshold]
+        spots = spots[img[spots[:, 0], spots[:, 1], c] > p_threshold]
         spots_list.append(spots)
     return spots_list
 
@@ -199,13 +169,6 @@ def assign_spots(
     res = mask_val
     res[dist > dist_th] = 0
     return res
-
-
-def change_ch(img):
-    tmp = np.swapaxes(img, 0, 1)
-    tmp = np.swapaxes(tmp, 1, 3)
-    tmp = np.swapaxes(tmp, 1, 2)
-    return tmp
 
 
 def plot_cell_and_spots(img, mask, signals, colors, number):
@@ -289,115 +252,59 @@ def plot_figs(cell_rois, cell_masks, cell_signals, res_dir):
     if os.path.exists(fig_dir):
         rmtree(f"./{fig_dir}")
     os.mkdir(f"./{fig_dir}")
-    for w in range(cell_rois.shape[0]):
-        fig = plot_cell_and_spots(cell_rois[w], cell_masks[w], cell_signals[w],  colors={"ch1": "hotpink", "ch2": "lime", "ch1+ch2": "yellow"}, number=w+1)
+    for w in range(len(cell_rois)):
+        fig = plot_cell_and_spots(
+            cell_rois[w], cell_masks[w], cell_signals[w],
+            colors={
+                "ch1": "hotpink",
+                "ch2": "lime",
+                "ch1+ch2": "yellow",
+            },
+            number=w+1)
         plt.text(50, -5, f"cell-{w+1}", fontsize=12)
         fig.savefig(f"{fig_dir}/cell-{w+1}.pdf")
         plt.close(fig)
 
 
-def extract_signal_mask(cell_im_ch, cell_spots, quantile=25, square_size=3):
+def extract_signal_mask(
+        cell_im_ch, cell_spots, quantile=25, square_size=3,
+        hard_threshold=None):
     mask = np.zeros_like(cell_im_ch)
     mask[cell_spots[:, 0], cell_spots[:, 1]] = 1
     mask = dilation(mask, square(square_size))
     signals = cell_im_ch[mask > 0]
     threshold = np.percentile(signals, quantile)
+    if hard_threshold is not None:
+        threshold = np.max([threshold, hard_threshold])
     signal_mask = cell_im_ch > threshold
     return signal_mask
 
 
-def get_signal_masks(ufish_instance, image, channels, quantile=25, square_size=3):
+def get_signal_masks(
+        ufish_instance, image, channels,
+        quantile=25, square_size=3,
+        hard_threshold=None):
     signal_masks = []  # signal masks for each channel
 
     for ch in channels:
-        cell_spots = call_spots(ufish_instance, image, ch=[ch], intensity_threshold=0.3)[0]
+        cell_spots = call_spots(
+            ufish_instance, image, ch=[ch], p_threshold=0.3)[0]
         cell_im_ch = image[:, :, ch]
         if len(cell_spots) == 0:
-            return None, None, None
-        signal_mask = extract_signal_mask(cell_im_ch, cell_spots, quantile=quantile, square_size=square_size)
+            signal_mask = np.zeros_like(cell_im_ch)
+        else:
+            signal_mask = extract_signal_mask(
+                cell_im_ch, cell_spots,
+                quantile=quantile, square_size=square_size,
+                hard_threshold=hard_threshold)
         signal_masks.append(signal_mask)
 
     merge_mask = reduce(lambda x, y: x & y, signal_masks)
-    signal_masks_sub = []  # signal masks for each channel after subtracting merged mask
+    # signal masks for each channel after subtracting merged mask
+    signal_masks_sub = []
 
     # remove connected components which with overlap with the merged
     for ch_sig_mask in signal_masks:
         signal_masks_sub.append(mask_sub(ch_sig_mask, [merge_mask]))
     signal_masks_sub = np.array(signal_masks_sub)
     return merge_mask, signal_masks_sub
-
-
-def keep_largest_area_label(mask):
-    unique_labels = np.unique(mask)
-    num_labels = len(unique_labels)
-    if num_labels == 1:
-        return mask
-    regions = regionprops(label(mask))
-    largest_region = max(regions, key=lambda region: region.area)
-    largest_label = largest_region.label
-    new_mask = np.zeros_like(mask)
-    new_mask[label(mask) == largest_label] = 1
-    return new_mask
-
-
-def pipeline(
-        cellpose_instance, ufish_instance,
-        img, signal_channels=[0, 1],
-        ):
-    print("Processing image:")
-    print(f"Image shape: {img.shape}")
-    print("Step 1: segment cells")
-    masks = segment_cells(cellpose_instance, img)
-
-    print("Step 2: extract ROIs")
-    cell_rois, cell_masks = extract_cell_rois(img, masks, 10)
-    cell_masks = [keep_largest_area_label(cell_masks[i]) for i in range(cell_masks.shape[0])]
-
-    print("Step 3: call spots and assign spots")
-    table = []
-    cell_signals = []
-    cell_rois = change_ch(cell_rois)
-    for w in range(cell_rois.shape[0]):
-        signals = {}
-        for ch in signal_channels:
-            signals[f"ch{ch+1}"] = []
-        name = "+".join([f"ch{ch+1}" for ch in signal_channels])
-        signals[name] = []
-        merge_mask, signal_masks, signal_masks_sub = get_merge_and_split_masks(
-            ufish_instance, cell_rois[w], signal_channels,
-            quantile=20, square_size=5)
-        if signal_masks is None:
-            for ch in signal_channels:
-                signals[f"ch{ch+1}"] = []
-            name = "+".join([f"ch{ch+1}" for ch in signal_channels])
-            signals[name] = []
-        else:
-            for ch in signal_channels:
-                single_ch = regionprops(label(signal_masks_sub[ch]))
-                spots = np.array([cc.centroid for cc in single_ch])
-                signals[f"ch{ch+1}"] = spots
-
-            merged = regionprops(label(merge_mask))
-            spots = np.array([cc.centroid for cc in merged])
-            name = "+".join([f"ch{ch+1}" for ch in signal_channels])
-            signals[name] = spots
-
-        assigns = {}
-        for name, spots in signals.items():
-            try:
-                assigns[name] = assign_spots(spots, cell_masks[w], 30)
-            except Exception:
-                assigns[name] = []
-
-        df = {
-            key: sum(value) for key, value in assigns.items()
-            if isinstance(value, np.ndarray)
-        }
-        df["cell_id"] = f'{w+1}'
-        last_key = list(df.keys())[-1]
-        last_value = df.pop(last_key)
-        df = {last_key: last_value, **df}
-        table.append(df)
-        cell_signals.append(signals)
-
-    return pd.DataFrame(table).fillna(0), cell_rois, cell_masks, cell_signals
