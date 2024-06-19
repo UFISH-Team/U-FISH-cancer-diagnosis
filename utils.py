@@ -9,6 +9,7 @@ from functools import reduce
 from skimage.segmentation import watershed
 import numpy as np
 import matplotlib.pyplot as plt
+import random
 
 
 def segment_cells(
@@ -210,14 +211,21 @@ def plot_cell_and_spots(img, mask, signals, colors, number):
     return fig
 
 
-def plot_all_rois(rois, masks, signals, colors):
+def plot_all_rois(rois, masks, signals, colors, max_plots=50):
+    selected_index = list(range(len(rois)))
+    if len(rois) > max_plots:
+        # randomly select max_plots 
+        random.shuffle(selected_index)
+        selected_index = selected_index[:max_plots]
+    rois = [rois[i] for i in selected_index]
+    masks = [masks[i] for i in selected_index]
+    signals = [signals[i] for i in selected_index]
     num_plots = len(rois)
     rows = int(np.ceil(num_plots / 5))
     cols = min(5, num_plots)
     fig, axs = plt.subplots(rows, cols, figsize=(15, 3*rows), facecolor='k')
 
     for i, (ax, roi, mask, signal) in enumerate(zip(axs.flat, rois, masks, signals)):
-        n = i+1
         bmask = mask > 0
         edges = dilation(bmask > 0, diamond(1)) & ~bmask
         img = roi.copy()
@@ -233,10 +241,10 @@ def plot_all_rois(rois, masks, signals, colors):
         text_colors = [colors.get(channel, 'white') for channel in channel_names]
         text_items = [f"{count}" for count in channel_counts]
 
-        for i, (text, color) in enumerate(zip(text_items, text_colors)):
-            ax.text(0.05 + 0.1 * i, 0.12, text, color=color, fontsize=20, alpha=0.8, transform=ax.transAxes, ha='center', va='top')
+        for j, (text, color) in enumerate(zip(text_items, text_colors)):
+            ax.text(0.05 + 0.1 * j, 0.12, text, color=color, fontsize=20, alpha=0.8, transform=ax.transAxes, ha='center', va='top')
 
-        ax.text(0.03, 0.97, str(n), color='white', fontsize=25, alpha=1, transform=ax.transAxes, ha='left', va='top')
+        ax.text(0.03, 0.97, str(selected_index[i]+1), color='white', fontsize=25, alpha=1, transform=ax.transAxes, ha='left', va='top')
         ax.axis("off")
 
     for ax in axs.flat[num_plots:]:
@@ -308,3 +316,19 @@ def get_signal_masks(
         signal_masks_sub.append(mask_sub(ch_sig_mask, [merge_mask]))
     signal_masks_sub = np.array(signal_masks_sub)
     return merge_mask, signal_masks_sub
+
+
+def plot_on_img(img, props):
+    scale = 0.01
+    figsize = (img.shape[1] * scale, img.shape[0] * scale)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.imshow(img)
+    for i, prop in enumerate(props):
+        ax.text(
+            prop.centroid[1],
+            prop.centroid[0],
+            f"{i+1}",
+            color="white"
+        )
+    fig.set_tight_layout(True)
+    return fig
