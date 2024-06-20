@@ -1,9 +1,7 @@
 from shutil import rmtree
 import os
 from sklearn.neighbors import KDTree
-from scipy.spatial.distance import cdist
 from skimage.measure import regionprops, label
-from skimage.morphology import remove_small_objects
 from skimage.morphology import diamond, ball, dilation, square
 from functools import reduce
 from skimage.segmentation import watershed
@@ -122,14 +120,13 @@ def spots_sub(spots_a: np.ndarray, spots_b: np.ndarray, radius: int):
     return cc_centroids(res_mask)[0]
 
 
-def call_spots(ufish_instance, img, ch=[0, 1], p_threshold=0.5):
+def call_spots(ufish_instance, img, ch=[0, 1]):
     """Call spots using ufish model."""
     uf = ufish_instance
     spots_list = []
     for c in ch:
         spots, _ = uf.predict(img[:, :, c])
         spots = spots.values
-        spots = spots[img[spots[:, 0], spots[:, 1], c] > p_threshold]
         spots_list.append(spots)
     return spots_list
 
@@ -291,12 +288,14 @@ def extract_signal_mask(
 def get_signal_masks(
         ufish_instance, image, channels,
         quantile=25, square_size=3,
-        hard_threshold=None):
+        mask_dilation_size=3,
+        hard_threshold=None,
+        ):
     signal_masks = []  # signal masks for each channel
 
     for ch in channels:
         cell_spots = call_spots(
-            ufish_instance, image, ch=[ch], p_threshold=0.3)[0]
+            ufish_instance, image, ch=[ch])[0]
         cell_im_ch = image[:, :, ch]
         if len(cell_spots) == 0:
             signal_mask = np.zeros_like(cell_im_ch)
@@ -305,6 +304,7 @@ def get_signal_masks(
                 cell_im_ch, cell_spots,
                 quantile=quantile, square_size=square_size,
                 hard_threshold=hard_threshold)
+        signal_mask = dilation(signal_mask, square(mask_dilation_size))
         signal_masks.append(signal_mask)
 
     merge_mask = reduce(lambda x, y: x & y, signal_masks)
