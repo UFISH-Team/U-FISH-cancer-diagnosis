@@ -125,7 +125,7 @@ def call_spots(ufish_instance, img, ch=[0, 1]):
     uf = ufish_instance
     spots_list = []
     for c in ch:
-        spots, _ = uf.predict(img[:, :, c])
+        spots, _ = uf.predict(img[:, :, c], intensity_threshold=0.3)
         spots = spots.values
         spots_list.append(spots)
     return spots_list
