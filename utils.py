@@ -15,7 +15,7 @@ def segment_cells(
     """Segment cells using cellpose model and remove masks based on centroid distance and axis ratio."""
     cp = cellpose_instance
     img = img[:, :, ch]
-    masks, _, _, _ = cp.eval(
+    masks, _, _ = cp.eval(
         img, diameter=50, flow_threshold=1.2, cellprob_threshold=1)
     return masks
 
